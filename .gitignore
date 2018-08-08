@@ -1,0 +1,9 @@
+# Node Modules
+node_modules/
+
+# Build Files
+lib/
+dist/
+
+# Rollup Cache
+.rpt2_cache/

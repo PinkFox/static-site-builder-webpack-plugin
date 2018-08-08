@@ -1,0 +1,44 @@
+{
+  "name": "static-site-builder-webpack-plugin",
+  "version": "0.0.1",
+  "description": "The minimal, unopinionated static site generator rewritten in TypeScript for modern Webpack.",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": "",
+    "build": "rollup -c",
+    "watch": "rollup -c --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PinkFox/static-site-builder-webpack-plugin"
+  },
+  "contributors": [
+    "Geoffrey Brege",
+    "Mark Dalgleish",
+    "Pierre Curto"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/PinkFox/static-site-builder-webpack-plugin/issues"
+  },
+  "homepage": "https://github.com/PinkFox/static-site-builder-webpack-plugin",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.2"
+  },
+  "devDependencies": {
+    "@types/cheerio": "^0.22.8",
+    "@types/webpack": "^4.4.8",
+    "@types/webpack-sources": "^0.1.5",
+    "rollup": "^0.63.4",
+    "rollup-plugin-cleanup": "^3.0.0",
+    "rollup-plugin-clear": "^2.0.7",
+    "rollup-plugin-typescript2": "^0.16.1",
+    "typescript": "^2.9.2",
+    "webpack": "^4.16.2",
+    "webpack-sources": "^1.1.0"
+  },
+  "peerDependencies": {
+    "webpack": "4.x",
+    "webpack-sources": "1.x"
+  }
+}
