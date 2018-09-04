@@ -23,7 +23,8 @@
   },
   "homepage": "https://github.com/PinkFox/static-site-builder-webpack-plugin",
   "dependencies": {
-    "cheerio": "^1.0.0-rc.2"
+    "cheerio": "^1.0.0-rc.2",
+    "require-like": "^0.1.2"
   },
   "devDependencies": {
     "@types/cheerio": "^0.22.8",

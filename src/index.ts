@@ -4,6 +4,7 @@ import { createContext, Script } from 'vm';
 import { compilation, Compiler, Plugin, Stats } from 'webpack';
 import { CachedSource, RawSource } from 'webpack-sources';
 
+const requireLike = require('require-like');
 const url = require('url');
 
 type StaticSiteBuilderWebpackPluginObject<Type> = {
@@ -167,7 +168,7 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 		// Merge in the Node globals
 		Object.assign(sandbox, global);
 
-		sandbox.require = require(filename);
+		sandbox.require = requireLike(filename);
 
 		// Merge in the plugin globals
 		Object.assign(sandbox, this.globals);
@@ -179,7 +180,7 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 			filename: filename,
 			id: filename,
 			parent: parentFilename,
-			require: sandbox.require || require(filename)
+			require: sandbox.require || requireLike(filename)
 		};
 		sandbox.global = sandbox;
 
