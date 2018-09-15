@@ -1,7 +1,8 @@
 import { load as cheerioLoad } from 'cheerio';
 import { join } from 'path';
 import { createContext, Script } from 'vm';
-import { compilation, Compiler, Plugin, Stats } from 'webpack';
+import { Configuration, compilation, Compiler, Plugin, Stats } from 'webpack';
+import webpack from 'webpack';
 import { CachedSource, RawSource } from 'webpack-sources';
 
 const requireLike = require('require-like');
@@ -14,11 +15,36 @@ type StaticSiteBuilderWebpackPluginObject<Type> = {
 type StaticSiteBuilderWebpackPluginRenderer = (locals: StaticSiteBuilderWebpackPluginObject<any>) => string;
 
 interface StaticSiteBuilderWebpackPluginOptions {
+	/**
+	 * Crawls the output HTML for relative <a> tags to follow
+	 */
 	crawl?: boolean;
-	entry?: string;
+	/**
+	 * Globals passed to the node sandbox when parsing the entry
+	 */
 	globals?: StaticSiteBuilderWebpackPluginObject<any>;
+	/**
+	 * Locals passed to the renderer when calling
+	 */
 	locals?: StaticSiteBuilderWebpackPluginObject<any>;
+	/**
+	 * Absolute path to directory to output files to
+	 */
+	output: string;
+	/**
+	 * Paths to render
+	 */
 	paths?: string[];
+	/**
+	 * Path to renderer to be parsed and used for building HTML
+	 */
+	renderer: string;
+	/**
+	 * Provides the ability to overwrite the webpack config used to build the renderer, 
+	 * particularly useful if adjustments need to be made to the rules to make 
+	 * adjustments for node to parse the function properly.
+	 */
+	webpack?: Configuration;
 };
 
 /**
@@ -28,22 +54,19 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 
 	private readonly tapName: string = 'StaticSiteBuilder';
 
-	private crawl: boolean;
-	private entry?: string;
-	private globals?: StaticSiteBuilderWebpackPluginObject<any>;
-	private locals?: StaticSiteBuilderWebpackPluginObject<any>;
-	private paths: string[];
+	private options: Required<StaticSiteBuilderWebpackPluginOptions>;
+	private renderer?: StaticSiteBuilderWebpackPluginRenderer;
 
-	constructor(options?: StaticSiteBuilderWebpackPluginOptions) {
-
-		options = options || {};
-
-		this.crawl = !!options.crawl;
-		this.entry = options.entry;
-		this.globals = options.globals;
-		this.locals = options.locals;
-		this.paths = Array.isArray(options.paths) ? options.paths : [options.paths || '/'];
-
+	constructor(options: StaticSiteBuilderWebpackPluginOptions) {
+		this.options = {
+			crawl: !!options.crawl,
+			globals: options.globals || {},
+			locals: options.locals || {},
+			output: options.output,
+			paths: Array.isArray(options.paths) ? options.paths : [options.paths || '/'],
+			renderer: options.renderer,
+			webpack: options.webpack || {}
+		};
 	}
 
 	/**
@@ -51,6 +74,10 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 	 * @param compiler Compiler from Webpack
 	 */
 	public apply(compiler: Compiler): void {
+
+		compiler.hooks.watchRun.tapPromise(this.tapName, () => this.buildRenderer(compiler));
+		compiler.hooks.run.tapPromise(this.tapName, () => this.buildRenderer(compiler));
+
 		compiler.hooks.thisCompilation.tap(this.tapName, (compilation) => {
 			compilation.hooks.optimizeAssets.tap(this.tapName, (otherassets: any) => {
 
@@ -58,25 +85,15 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 				const webpackStatsJson = webpackStats.toJson();
 
 				try {
-
-					const asset = this.findAsset(this.entry, compilation, webpackStatsJson);
-
-					if (!asset) {
-						throw new Error(`Source file not found: "${this.entry}"`);
-					}
-
 					const assets = this.getAssetsFromCompilation(compilation, webpackStatsJson);
-					const source = asset.source();
-					let renderer = this.getRenderer(source);
-
-					this.renderPaths(this.paths, renderer, assets, webpackStats, compilation);
-
+					this.renderPaths(this.options.paths, assets, webpackStats, compilation);
 				} catch (e) {
 					compilation.errors.push(e.stack);
 				}
 
 			});
 		});
+
 	}
 
 	/**
@@ -153,6 +170,66 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 	}
 
 	/**
+	 * Builds the renderer to a node-usable function with Webpack
+	 * @param compiler Webpack Compiler object
+	 */
+	private buildRenderer(compiler: Compiler): Promise<any> {
+		return new Promise((resolve, reject) => {
+
+			const webpackRendererConfig = Object.assign(
+				{
+					entry: this.options.renderer,
+					mode: compiler.options.mode,
+					module: compiler.options.module,
+					optimization: {
+						splitChunks: false
+					},
+					output: {
+						chunkFilename: '[name].js',
+						filename: 'html.js',
+						libraryTarget: 'commonjs',
+						path: this.options.output
+					},
+					resolve: compiler.options.resolve,
+					target: 'node'
+				},
+				this.options.webpack
+			);
+	
+			webpack(webpackRendererConfig, 
+				(err, stats) => {
+	
+					if (err || stats.hasErrors()) {
+						reject(`Error building HTML renderer!`);
+					}
+	
+					const webpackStatsJson = stats.toJson();
+	
+					try {
+	
+						const asset = this.findAsset(null, stats.compilation, webpackStatsJson);
+	
+						if (!asset) {
+							throw new Error(`Source file not found: "${this.options.renderer}"`);
+						}
+	
+						const source = asset.source();
+						this.renderer = this.getRenderer(source);
+	
+						resolve();
+	
+					} catch (e) {
+						stats.compilation.errors.push(e.stack);
+						reject(`Error parsing HTML renderer!\n${e}`);
+					}
+	
+				}
+			);
+
+		});
+	}
+
+	/**
 	 * Evalutes the source in a sandbox and returns the exported module 
 	 * as long as it is a function
 	 * 
@@ -162,7 +239,7 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 	private getRenderer(source: string): StaticSiteBuilderWebpackPluginRenderer {
 
 		const parentFilename = (module.parent ? module.parent.filename : '');
-		const filename = this.entry || parentFilename;
+		const filename = this.options.renderer || parentFilename;
 		let sandbox: StaticSiteBuilderWebpackPluginObject<any> = {};
 
 		// Merge in the Node globals
@@ -171,7 +248,7 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 		sandbox.require = requireLike(filename);
 
 		// Merge in the plugin globals
-		Object.assign(sandbox, this.globals);
+		Object.assign(sandbox, this.options.globals);
 
 		// Setup sandbox for a Node environment
 		sandbox.exports = exports;
@@ -198,20 +275,19 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 		const script = new Script(stringScript);
 		script.runInContext(context, options);
 
+		// Get the default export if available, otherwise just return the export
 		const renderer = (sandbox.module.exports.default ? sandbox.module.exports.default : sandbox.module.exports);
 
 		if (typeof renderer !== 'function') {
-			throw new Error(`Export from "${this.entry}" must be a function that returns an HTML string. Is output.libraryTarget in the configuration set to "umd"?`);
+			throw new Error(`Export from "${this.options.renderer}" must be a function that returns an HTML string. Is output.libraryTarget in the configuration set to "umd"?`);
 		}
 
-		// Return default export if available, otherwise just return the export
-		return (sandbox.module.exports.default ? sandbox.module.exports.default : sandbox.module.exports);
+		return renderer;
 
 	}
 
 	private renderPaths(
 		paths: string[],
-		renderer: StaticSiteBuilderWebpackPluginRenderer, 
 		assets: StaticSiteBuilderWebpackPluginObject<any>, 
 		webpackStats: Stats, 
 		compilation: compilation.Compilation
@@ -222,44 +298,50 @@ class StaticSiteBuilderWebpackPlugin implements Plugin {
 			let locals: StaticSiteBuilderWebpackPluginObject<any> = {
 				path: outputPath,
 				assets: assets,
-				webpackStats: webpackStats
+				webpackStats: webpackStats,
+
 			};
 
-			if (this.locals) {
-				for (const prop in this.locals) {
-					if (this.locals[prop]) {
-						locals[prop] = this.locals[prop];
+			if (this.options.locals) {
+				for (const prop in this.options.locals) {
+					if (this.options.locals[prop]) {
+						locals[prop] = this.options.locals[prop];
 					}
 				}
 			}
 
-			return Promise.resolve(renderer(locals))
-				.then((output) => {
+			if (typeof this.renderer === 'function') {
+				return Promise.resolve(this.renderer(locals))
+					.then((output) => {
 
-					// Ensure output is an object for mapping by key below
-					const outputByPath = typeof output === 'object' ? output : { [outputPath]: output };
+						// Ensure output is an object for mapping by key below
+						const outputByPath = typeof output === 'object' ? output : { [outputPath]: output };
 
-					const assetGenerationPromises = Object.keys(outputByPath).map((key) => {
-						const rawSource = outputByPath[key];
-						const assetName = this.pathToAssetName(outputPath);
+						const assetGenerationPromises = Object.keys(outputByPath).map((key) => {
+							const rawSource = outputByPath[key];
+							const assetName = this.pathToAssetName(outputPath);
 
-						// Avoid overwriting an existing asset
-						if (compilation.assets[assetName]) {
-							return;
-						}
+							// Avoid overwriting an existing asset
+							if (compilation.assets[assetName]) {
+								console.log(`Adding ${assetName} to compilation as been aborted, asset exists already!`);
+								return;
+							}
 
-						compilation.assets[assetName] = new RawSource(rawSource);
+							compilation.assets[assetName] = new RawSource(rawSource);
 
-						if (this.crawl) {
-							const relativePaths = this.relativePathsFromHtml(rawSource, key);
-							return this.renderPaths(relativePaths, renderer, assets, webpackStats, compilation);
-						}
+							if (this.options.crawl) {
+								const relativePaths = this.relativePathsFromHtml(rawSource, key);
+								return this.renderPaths(relativePaths, assets, webpackStats, compilation);
+							}
+
+						});
+
+						return Promise.all(assetGenerationPromises);
 
 					});
-
-					return Promise.all(assetGenerationPromises);
-
-				});
+			} else {
+				return Promise.reject(`Export from "${this.options.renderer}" must be a function.`);
+			}
 
 		});
 
